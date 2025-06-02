@@ -81,3 +81,5 @@ create-master:
 	sed '/#EXT-X-STREAM-INF:/ s/$$/,FRAME-RATE=30/' master_30fps.m3u8 > master_30fps_with_framerate.m3u8 && \
 	cat master_60fps_with_framerate.m3u8 master_30fps_with_framerate.m3u8 > master.m3u8 && \
 	cd ..
+
+#docker build -t my-hls-server -f server/Dockerfile .
