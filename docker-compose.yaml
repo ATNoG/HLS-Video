@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+
+  hls-server:
+    image: atnog-harbor.av.it.pt/atnog/hls-server@sha256:e1cfca1dbda67486b83fb6e2f254333f2b34db99a2e682e8fd48a66b9e25bdc5
+    container_name: hls-server
+    ports:
+      - "8080:80"
+    restart: always
+
+  hls-client:
+    image: atnog-harbor.av.it.pt/atnog/hls-client
+    container_name: hls-client
+    ports:
+      - "8081:80"
+    environment:
+      # Optional: Set the HLS master stream URL to inject into index.html
+      # Remove or comment this line if you want to skip replacement
+      HLS_SERVER_MASTER_STREAM_URL: "http://10.255.28.235:8080/hls/master.m3u8"
+    restart: always
