@@ -241,3 +241,6 @@ pyrightconfig.json
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/linux,macos,python,visualstudiocode
+
+**/input.mp4
+**/full_video.mp4
