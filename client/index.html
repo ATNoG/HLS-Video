@@ -1,0 +1,344 @@
+
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>HLS Player with Real FPS, Bandwidth & Frame Delay</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #fff;
+      margin: 0;
+      padding: 1rem;
+      height: 100vh;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+
+    #container {
+      display: flex;
+      height: 100%;
+      gap: 1rem;
+    }
+
+    video {
+      width: 75%;
+      height: 100%;
+      border: 2px solid #444;
+      border-radius: 8px;
+      background: black;
+      object-fit: contain;
+    }
+
+    #controls {
+      width: 25%;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      max-height: 100%;
+    }
+
+    #sourceInput {
+      width: 100%;
+      padding: 0.4rem 0.5rem;
+      font-size: 1rem;
+      border-radius: 4px;
+      border: none;
+      margin-bottom: 0.5rem;
+      color: #000;
+    }
+
+    #loadBtn {
+      padding: 0.5rem;
+      background-color: #007bff;
+      border: none;
+      border-radius: 4px;
+      color: white;
+      cursor: pointer;
+      font-weight: bold;
+      margin-bottom: 1rem;
+      transition: background-color 0.3s ease;
+    }
+
+    #loadBtn:hover {
+      background-color: #0056b3;
+    }
+
+    .quality-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      flex-grow: 1;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #444 transparent;
+    }
+
+    .quality-buttons::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .quality-buttons::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .quality-buttons::-webkit-scrollbar-thumb {
+      background-color: #444;
+      border-radius: 4px;
+    }
+
+    .quality-buttons button {
+      padding: 0.5rem 1rem;
+      background-color: #222;
+      border: 1px solid #555;
+      border-radius: 5px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.9rem;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .quality-buttons button.active,
+    .quality-buttons button:hover {
+      background-color: #007bff;
+      border-color: #007bff;
+    }
+
+    #streamInfo {
+      margin-top: 1rem;
+      font-size: 0.95rem;
+      color: #ccc;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="container">
+    <video id="video" controls autoplay></video>
+
+    <div id="controls">
+      <input type="text" id="sourceInput" value="http://localhost/hls/master.m3u8" />
+      <button id="loadBtn">Load Stream</button>
+      <div class="quality-buttons" id="qualityControls">
+        <button data-level="-1" class="active">Auto</button>
+        <!-- Quality buttons appended here -->
+      </div>
+      <div id="streamInfo">FPS: N/A<br>Bitrate: N/A<br>Buffer: N/A<br>Bandwidth: N/A<br>Avg Frame Delay: N/A</div>
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const qualityControls = document.getElementById('qualityControls');
+    const streamInfo = document.getElementById('streamInfo');
+    const sourceInput = document.getElementById('sourceInput');
+    const loadBtn = document.getElementById('loadBtn');
+
+    let hls = null;
+
+    // For bandwidth calculation:
+    let bandwidthBps = 0;
+
+    // For frame delay calculation:
+    let frameDelays = [];
+    const MAX_FRAME_DELAY_SAMPLES = 30;
+
+    // Real decoded/rendered FPS measurement using requestVideoFrameCallback
+    let frameCount = 0;
+    let lastTime = performance.now();
+    let measuredFPS = 0;
+
+    // Format bitrate nicely
+    function formatBitrate(bitrate) {
+      if (!bitrate) return 'N/A';
+      if (bitrate >= 1e6) return (bitrate / 1e6).toFixed(1) + ' Mbps';
+      if (bitrate >= 1e3) return (bitrate / 1e3).toFixed(1) + ' kbps';
+      return bitrate + ' bps';
+    }
+
+    // Format bandwidth bytes/sec nicely
+    function formatBandwidth(bytes) {
+      if (!bytes) return 'N/A';
+      if (bytes >= 1e6) return (bytes / 1e6).toFixed(2) + ' MB/s';
+      if (bytes >= 1e3) return (bytes / 1e3).toFixed(2) + ' kB/s';
+      return bytes + ' B/s';
+    }
+
+    // Update stream info (FPS, Bitrate, Buffer, Bandwidth, Frame Delay)
+    function updateStreamInfo() {
+      if (!hls) {
+        streamInfo.innerHTML = `FPS: ${measuredFPS.toFixed(1)}\nBitrate: N/A\nBuffer: N/A\nBandwidth: N/A\nAvg Frame Delay: N/A`;
+        return;
+      }
+
+      const bitrate = hls.bandwidth || null;
+
+      const bufferLength = hls.media && hls.media.buffered.length > 0 ?
+        (hls.media.buffered.end(0) - hls.media.currentTime).toFixed(2) : '0';
+
+      // Average frame delay in ms:
+      const avgFrameDelay = frameDelays.length
+        ? (frameDelays.reduce((a, b) => a + b, 0) / frameDelays.length).toFixed(2)
+        : 'N/A';
+
+      streamInfo.innerHTML = `FPS: ${measuredFPS.toFixed(1)}\nBitrate: ${formatBitrate(bitrate)}\nBuffer: ${bufferLength}s\nBandwidth: ${formatBandwidth(bandwidthBps)}\nAvg Frame Delay: ${avgFrameDelay} ms`;
+    }
+
+    // Video frame callback for FPS and frame delay
+    function onVideoFrame(now, metadata) {
+      frameCount++;
+      const elapsed = now - lastTime;
+
+      // Calculate frame delay (expectedDisplayTime - presentationTime) in ms
+      if (metadata.expectedDisplayTime && metadata.presentationTime) {
+        const delay = (metadata.expectedDisplayTime - metadata.presentationTime) * 1000;
+        if (delay >= 0 && delay < 1000) { // filter reasonable values
+          frameDelays.push(delay);
+          if (frameDelays.length > MAX_FRAME_DELAY_SAMPLES) frameDelays.shift();
+        }
+      }
+
+      if (elapsed >= 1000) { // update every second
+        measuredFPS = (frameCount / elapsed) * 1000;
+        frameCount = 0;
+        lastTime = now;
+        updateStreamInfo();
+      }
+      video.requestVideoFrameCallback(onVideoFrame);
+    }
+
+    // Clear quality buttons except Auto
+    function clearQualityButtons() {
+      const buttons = qualityControls.querySelectorAll('button');
+      buttons.forEach(btn => {
+        if (btn.dataset.level !== '-1') btn.remove();
+      });
+      qualityControls.querySelector('button[data-level="-1"]').classList.add('active');
+    }
+
+    // Setup quality buttons based on levels
+    function setupQualityButtons(levels) {
+      clearQualityButtons();
+
+      function resolutionLabel(height) {
+        if (height >= 2160) return '4K';
+        if (height >= 1440) return '2K';
+        if (height >= 1080) return 'Full HD';
+        if (height >= 720) return 'HD';
+        if (height >= 480) return 'SD';
+        if (height >= 360) return '360p';
+        if (height >= 240) return '240p';
+        if (height >= 144) return '144p';
+        return `${height}p`;
+      }
+
+      levels.forEach((level, index) => {
+        const fps = level.attrs && level.attrs['FRAME-RATE']
+          ? level.attrs['FRAME-RATE']
+          : level.fps || 'n/a';
+
+        const resName = resolutionLabel(level.height);
+        const label = `${resName} (${level.height}p) @ ${fps} fps`;
+
+        const btn = document.createElement('button');
+        btn.textContent = label;
+        btn.setAttribute('data-level', index);
+        qualityControls.appendChild(btn);
+      });
+    }
+
+
+    // Attach click event to quality buttons
+    function attachQualityButtonEvents() {
+      qualityControls.addEventListener('click', (e) => {
+        if (e.target.tagName === 'BUTTON') {
+          const selected = parseInt(e.target.getAttribute('data-level'), 10);
+          if (hls) {
+            hls.currentLevel = selected;
+          }
+          qualityControls.querySelectorAll('button').forEach(btn =>
+            btn.classList.remove('active')
+          );
+          e.target.classList.add('active');
+        }
+      });
+    }
+
+    // Load stream via HLS.js
+    function loadStream(url) {
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
+      clearQualityButtons();
+      bandwidthBps = 0;
+      frameDelays = [];
+      measuredFPS = 0;
+      updateStreamInfo();
+
+      if (Hls.isSupported()) {
+        hls = new Hls();
+
+        // Calculate bandwidth on fragment loaded
+        hls.on(Hls.Events.FRAG_LOADED, (event, data) => {
+          // data.stats: { loading: time, total: bytes, etc }
+          if (data && data.stats) {
+            const bytes = data.stats.total || 0;
+            const duration = data.stats.tload - data.stats.trequest || 0;
+            if (duration > 0) {
+              bandwidthBps = bytes / (duration / 1000); // bytes per second
+              updateStreamInfo();
+            }
+          }
+        });
+
+        hls.loadSource(url);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          setupQualityButtons(hls.levels);
+          updateStreamInfo();
+          video.play();
+        });
+
+        hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+          const level = hls.levels[data.level];
+          if (level) {
+            updateStreamInfo();
+          }
+        });
+
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          console.error('HLS error:', data);
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Native support (Safari)
+        video.src = url;
+        video.addEventListener('loadedmetadata', () => {
+          video.play();
+        });
+      } else {
+        alert('HLS not supported in this browser.');
+      }
+    }
+
+    // Initial load
+    attachQualityButtonEvents();
+    loadBtn.addEventListener('click', () => {
+      loadStream(sourceInput.value.trim());
+    });
+
+    video.requestVideoFrameCallback(onVideoFrame);
+
+  </script>
+</body>
+
+</html>

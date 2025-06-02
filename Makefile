@@ -1,8 +1,25 @@
 # Dependencies
 # - make
 # - ffmpeg
+
+# VARIABLES
+
+# Video
 BASE_VIDEO_URL="http://distribution.bbb3d.renderfarming.net/video/mp4/bbb_sunflower_2160p_60fps_normal.mp4"
 
+# Docker
+LOCAL_SERVER_IMAGE_NAME = hls-server
+LOCAL_SERVER_TAG = latest
+LOCAL_CLIENT_IMAGE_NAME = hls-client
+LOCAL_CLIENT_TAG = latest
+
+DOCKER_REPOSITORY_SERVER_IMAGE_NAME = hls-server
+DOCKER_REPOSITORY_SERVER_TAG = latest
+DOCKER_REPOSITORY_CLIENT_IMAGE_NAME = hls-client
+DOCKER_REPOSITORY_CLIENT_TAG = latest
+REPOSITORY_HOST = atnog-harbor.av.it.pt/atnog
+
+# HLS Videos
 download-video:
 	wget $(BASE_VIDEO_URL) -O full_video.mp4
 
@@ -82,4 +99,46 @@ create-master:
 	cat master_60fps_with_framerate.m3u8 master_30fps_with_framerate.m3u8 > master.m3u8 && \
 	cd ..
 
-#docker build -t my-hls-server -f server/Dockerfile .
+# Docker Container - HLS Server
+docker-build-hls-server:
+	docker build -t $(LOCAL_SERVER_IMAGE_NAME):$(LOCAL_SERVER_TAG) -f server/Dockerfile .
+
+docker-tag-hls-server:
+	docker tag $(LOCAL_SERVER_IMAGE_NAME):$(LOCAL_SERVER_TAG) $(REPOSITORY_HOST)/$(DOCKER_REPOSITORY_SERVER_IMAGE_NAME):$(DOCKER_REPOSITORY_SERVER_TAG)
+
+docker-push-hls-server:
+	docker push $(REPOSITORY_HOST)/$(DOCKER_REPOSITORY_SERVER_IMAGE_NAME):$(DOCKER_REPOSITORY_SERVER_TAG)
+
+docker-clean-hls-server:
+	docker image prune -f
+
+docker-remove-hls-server:
+	docker rmi $(LOCAL_SERVER_IMAGE_NAME):$(LOCAL_SERVER_TAG)
+
+docker-hls-server: docker-build-hls-server docker-tag-hls-server docker-push-hls-server
+
+
+# Docker Container - HLS Client
+docker-build-hls-client:
+	docker build -t $(LOCAL_CLIENT_IMAGE_NAME):$(LOCAL_CLIENT_TAG) -f client/Dockerfile .
+
+docker-tag-hls-client:
+	docker tag $(LOCAL_CLIENT_IMAGE_NAME):$(LOCAL_CLIENT_TAG) $(REPOSITORY_HOST)/$(DOCKER_REPOSITORY_CLIENT_IMAGE_NAME):$(DOCKER_REPOSITORY_CLIENT_TAG)
+
+docker-push-hls-client:
+	docker push $(REPOSITORY_HOST)/$(DOCKER_REPOSITORY_CLIENT_IMAGE_NAME):$(DOCKER_REPOSITORY_CLIENT_TAG)
+
+docker-clean-hls-client:
+	docker image prune -f
+
+docker-remove-hls-client:
+	docker rmi $(LOCAL_CLIENT_IMAGE_NAME):$(LOCAL_CLIENT_TAG)
+
+docker-hls-client: docker-build-hls-client docker-tag-hls-client docker-push-hls-client
+
+# Run
+run:
+	docker compose up -d
+
+stop:
+	docker compose down
